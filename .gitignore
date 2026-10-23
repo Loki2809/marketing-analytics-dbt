@@ -1,0 +1,25 @@
+# Python virtual environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# dbt output (also covered by marketing_analytics/.gitignore)
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# Secrets: never commit keys or local env files
+.env
+*.p8
+*.pem
+*.key
+
+# Personal Claude Code settings
+.claude/settings.local.json
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

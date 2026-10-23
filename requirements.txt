@@ -1,0 +1,4 @@
+# Python packages for this project.
+# Install with: python -m pip install -r requirements.txt
+dbt-core==1.12.6
+dbt-snowflake==1.12.4

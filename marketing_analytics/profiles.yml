@@ -1,0 +1,17 @@
+# How dbt connects to Snowflake.
+# No secrets live here: account, user and key path come from environment variables,
+# set locally with `setx` and in CI from GitHub Secrets.
+marketing_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      # Key-pair login: dbt signs in with the private key, no password needed.
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role: TRANSFORMER
+      warehouse: TRANSFORM_WH
+      database: MARKETING_DB
+      schema: DBT_DEV
+      threads: 4
