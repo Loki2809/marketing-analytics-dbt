@@ -61,7 +61,7 @@ so the staging layer has real cleaning work.
 - GitHub Actions CI with Snowflake credentials stored as GitHub Secrets
 
 ## Milestones
-- [ ] M0 Setup: Snowflake trial, warehouse/database/schemas, Python env, dbt installed, `dbt debug` passes, GitHub repo
+- [x] M0 Setup: Snowflake trial, warehouse/database/schemas, Python env, dbt installed, `dbt debug` passes, GitHub repo
 - [ ] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
 - [ ] M2 Staging models + sources + basic tests
 - [ ] M3 Intermediate + marts (including attribution)
@@ -71,7 +71,22 @@ so the staging layer has real cleaning work.
 - [ ] M7 README, architecture diagram, dbt docs, Power BI dashboard, resume bullets
 
 ## Current status
-M0 in progress. Done: Snowflake objects, Python 3.12 venv (`.venv`), dbt-core 1.12.6 + dbt-snowflake 1.12.4 (staying on dbt v1),
-dbt project in `marketing_analytics/`, key-pair auth (keys in `~/.snowflake`, env vars SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER /
-SNOWFLAKE_PRIVATE_KEY_PATH), `profiles.yml` in the project folder, `dbt debug` passes.
-Remaining: `.gitignore`, git init, GitHub repo.
+M0 done. Python 3.12 venv (`.venv`), dbt-core 1.12.6 + dbt-snowflake 1.12.4 (staying on dbt v1),
+dbt project in `marketing_analytics/` (run dbt commands from there), key-pair auth (keys in `~/.snowflake`, env vars
+SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER / SNOWFLAKE_PRIVATE_KEY_PATH), `profiles.yml` in the project folder, `dbt debug` passes.
+Repo: github.com/Loki2809/marketing-analytics-dbt (branch `main`).
+Git identity: commit and push as Lokeshwaran / GitHub user Loki2809 using repo-local `git config` and a remote URL
+with `Loki2809@github.com`. Some machines have a different global Git identity; never change `--global` settings.
+
+M1 in progress. Done: pandas 3.1.0 + Faker 40.43.0 installed and pinned in `requirements.txt`.
+Next: write `data_generator/generate_data.py` (not started), then load into Snowflake RAW.
+Agreed M1 plan:
+- Window: last 12 months up to today. Fixed random seed so runs are reproducible.
+- Output: CSVs in `data/raw/`. `data/` is git-ignored; the data is rebuilt with one command.
+- Approx. rows: campaigns ~15, ad_spend ~4,000 (campaign x day), customers ~5,000, web_sessions ~60,000,
+  events ~200,000 (funnel per session), orders ~6,000. Conversion differs by channel so CAC/ROAS tell a story.
+- UTMs link ad spend to sessions. Logged-in return sessions give customers multiple touchpoints (for attribution).
+- Planned mess: customers (duplicate rows, older versions, email case/spaces, US/usa/United States, NULL country);
+  web_sessions (NULL UTMs, Google/google/GOOGLE, fb vs facebook); events (exact duplicates);
+  orders (test orders via @test.com customers and status TEST, mixed-case status, duplicates);
+  ad_spend (Google Ads/google_ads/META, some NULL clicks); campaigns (channel labels differ from ad_spend).
