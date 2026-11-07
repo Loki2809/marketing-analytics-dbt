@@ -129,6 +129,20 @@ ORDER_VALUE_SPREAD = 0.5       # how much order values vary around the average
 # Final status of each order (clean values are lowercase).
 ORDER_STATUS_MIX = {"completed": 0.90, "returned": 0.05, "cancelled": 0.05}
 
+# --- mess (deliberate data-quality problems for dbt to clean) ---
+# A separate seed, so changing the mess never changes the clean data underneath.
+MESS_SEED = SEED + 1
+N_TEST_CUSTOMERS = 8           # internal QA accounts (@test.com) with fake orders
+
+# The campaigns table (from the marketing team) labels channels its own way...
+CAMPAIGN_CHANNEL_LABELS = {"google": "Google Ads", "meta": "Meta Ads", "email": "Email"}
+# ...and the ad platforms' exports into ad_spend are inconsistent too.
+AD_SPEND_CHANNEL_VARIANTS = {
+    "google": ["google", "Google Ads", "google_ads"],
+    "meta":   ["meta", "META", "Meta Ads"],
+    "email":  ["email", "Email"],
+}
+
 
 # ---------------------------------------------------------------------------
 # 1. campaigns
@@ -447,6 +461,146 @@ def make_orders(events: pd.DataFrame, web_sessions: pd.DataFrame) -> pd.DataFram
 
 
 # ---------------------------------------------------------------------------
+# 7. Mess: make the clean tables look like real, messy raw data
+# ---------------------------------------------------------------------------
+
+def _pick(r: np.random.Generator, n: int, share: float) -> np.ndarray:
+    """True for about `share` of n rows, chosen at random."""
+    return r.random(n) < share
+
+
+def add_mess(tables: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Return messy copies of the tables (helper columns removed) and a
+    report listing every problem added, so we can check dbt fixes them all."""
+    r = np.random.default_rng(MESS_SEED)
+    report = []
+    clean_customers = tables["customers"]
+    t = {name: df.loc[:, ~df.columns.str.startswith("_")].copy() for name, df in tables.items()}
+
+    # --- campaigns: channel labels differ from the other tables -------------
+    t["campaigns"]["channel"] = t["campaigns"]["channel"].map(CAMPAIGN_CHANNEL_LABELS)
+    report.append("campaigns: channel labels are 'Google Ads' / 'Meta Ads' / 'Email'")
+
+    # --- ad_spend: inconsistent channel names, some missing clicks ----------
+    ad = t["ad_spend"]
+    for channel, labels in AD_SPEND_CHANNEL_VARIANTS.items():
+        rows = ad["channel"] == channel
+        ad.loc[rows, "channel"] = r.choice(labels, size=rows.sum())
+    ad["clicks"] = ad["clicks"].astype("Int64")       # Int64 = whole numbers that allow blanks
+    no_clicks = _pick(r, len(ad), 0.02)
+    ad.loc[no_clicks, "clicks"] = pd.NA
+    report.append(f"ad_spend: mixed channel names; {no_clicks.sum()} rows with NULL clicks")
+
+    # --- customers -----------------------------------------------------------
+    cu = t["customers"]
+    countries = list(COUNTRY_MIX)
+
+    # Older versions: half of the customers who changed their profile also
+    # have their previous row (old country, updated_at = signup time).
+    changed = clean_customers["updated_at"] > clean_customers["_signup_ts"]
+    has_old = changed & _pick(r, len(cu), 0.5)
+    old = cu[has_old].copy()
+    current_pos = old["country"].map(countries.index).to_numpy()
+    old["country"] = [countries[(p + r.integers(1, len(countries))) % len(countries)]
+                      for p in current_pos]                  # always a different country
+    old["updated_at"] = clean_customers.loc[has_old, "_signup_ts"]
+
+    # Messy emails: some UPPERCASE, some with spaces around them.
+    upper = _pick(r, len(cu), 0.05)
+    spaces = _pick(r, len(cu), 0.03)
+    cu.loc[upper, "email"] = cu.loc[upper, "email"].str.upper()
+    cu.loc[spaces, "email"] = "  " + cu.loc[spaces, "email"] + " "
+
+    # Messy countries: "US" written different ways, some missing.
+    us_rows = (cu["country"] == "US") & _pick(r, len(cu), 0.25)
+    cu.loc[us_rows, "country"] = r.choice(["usa", "United States", "U.S."], size=us_rows.sum())
+    no_country = _pick(r, len(cu), 0.02)
+    cu.loc[no_country, "country"] = None
+
+    # Internal test accounts.
+    test_ids = [f"C{len(cu) + i:05d}" for i in range(1, N_TEST_CUSTOMERS + 1)]
+    test_signup = pd.Timestamp(START_DATE) + pd.to_timedelta(
+        r.integers(0, 365 * 86_400, N_TEST_CUSTOMERS), unit="s")
+    test_customers = pd.DataFrame({
+        "customer_id": test_ids,
+        "email": [f"qa.tester{i}@test.com" for i in range(1, N_TEST_CUSTOMERS + 1)],
+        "signup_date": test_signup.date,
+        "country": "US",
+        "updated_at": test_signup,
+    })
+
+    # Exact duplicate rows (the same row loaded twice).
+    dupes = cu[_pick(r, len(cu), 0.01)]
+
+    t["customers"] = (
+        pd.concat([cu, old, test_customers, dupes], ignore_index=True)
+        .sort_values(["customer_id", "updated_at"], ignore_index=True)
+    )
+    report.append(
+        f"customers: {len(old)} older versions, {upper.sum()} UPPERCASE emails, "
+        f"{spaces.sum()} emails with spaces, {us_rows.sum()} US spelled differently, "
+        f"{no_country.sum()} NULL countries, {N_TEST_CUSTOMERS} @test.com accounts, "
+        f"{len(dupes)} exact duplicates"
+    )
+
+    # --- web_sessions: lost UTMs, mixed-case sources, fb vs facebook ---------
+    ws = t["web_sessions"]
+    utm_cols = ["utm_source", "utm_medium", "utm_campaign"]
+    lost = ws["utm_source"].notna() & _pick(r, len(ws), 0.03)
+    ws.loc[lost, utm_cols] = None
+    google = ws["utm_source"] == "google"
+    ws.loc[google, "utm_source"] = r.choice(
+        ["google", "Google", "GOOGLE"], size=google.sum(), p=[0.80, 0.12, 0.08])
+    facebook = ws["utm_source"] == "facebook"
+    ws.loc[facebook, "utm_source"] = r.choice(
+        ["facebook", "fb", "Facebook"], size=facebook.sum(), p=[0.70, 0.22, 0.08])
+    report.append(
+        f"web_sessions: {lost.sum()} ad visits lost their UTM tags; "
+        "Google/google/GOOGLE; facebook/fb/Facebook"
+    )
+
+    # --- events: exact duplicates ------------------------------------------
+    ev = t["events"]
+    ev_dupes = ev[_pick(r, len(ev), 0.01)]
+    t["events"] = (
+        pd.concat([ev, ev_dupes], ignore_index=True)
+        .sort_values(["event_timestamp", "event_id"], ignore_index=True)
+    )
+    report.append(f"events: {len(ev_dupes)} exact duplicates")
+
+    # --- orders: mixed-case status, test orders, duplicates -----------------
+    od = t["orders"]
+    cap = _pick(r, len(od), 0.10)
+    upp = _pick(r, len(od), 0.03) & ~cap
+    od.loc[cap, "status"] = od.loc[cap, "status"].str.capitalize()   # Completed
+    od.loc[upp, "status"] = od.loc[upp, "status"].str.upper()        # COMPLETED
+
+    # Test orders: 3 per test account, tiny amounts, some marked status TEST.
+    n_test = N_TEST_CUSTOMERS * 3
+    test_times = test_signup.repeat(3) + pd.to_timedelta(r.integers(60, 30 * 86_400, n_test), unit="s")
+    test_times = test_times.where(test_times <= pd.Timestamp(END_DATE), test_signup.repeat(3))
+    test_orders = pd.DataFrame({
+        "order_id": [f"O{len(od) + i:06d}" for i in range(1, n_test + 1)],
+        "customer_id": np.repeat(test_ids, 3),
+        "order_date": test_times,
+        "revenue": r.choice([0.01, 1.00, 9.99], size=n_test),
+        "status": r.choice(["TEST", "completed"], size=n_test),
+    })
+
+    od_dupes = od[_pick(r, len(od), 0.005)]
+    t["orders"] = (
+        pd.concat([od, test_orders, od_dupes], ignore_index=True)
+        .sort_values(["order_date", "order_id"], ignore_index=True)
+    )
+    report.append(
+        f"orders: {cap.sum() + upp.sum()} mixed-case statuses, {n_test} test orders, "
+        f"{len(od_dupes)} exact duplicates"
+    )
+
+    return t, report
+
+
+# ---------------------------------------------------------------------------
 # Main: build the tables and write them to CSV
 # ---------------------------------------------------------------------------
 
@@ -469,15 +623,21 @@ def main() -> None:
         "orders": orders,
     }
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for name, df in tables.items():
-        # Leave out helper columns (names starting with "_").
-        public = df.loc[:, ~df.columns.str.startswith("_")]
-        path = OUTPUT_DIR / f"{name}.csv"
-        public.to_csv(path, index=False)
-        print(f"  {name:<12} {len(public):>8,} rows -> data/raw/{name}.csv")
+    # Make messy copies (helper columns removed) and write those to CSV.
+    messy, mess_report = add_mess(tables)
 
-    # Quick sanity checks.
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for name, df in messy.items():
+        path = OUTPUT_DIR / f"{name}.csv"
+        df.to_csv(path, index=False)
+        print(f"  {name:<12} {len(df):>8,} rows -> data/raw/{name}.csv")
+
+    print("\nMess added on purpose (for dbt to clean):")
+    for line in mess_report:
+        print(f"  - {line}")
+
+    # Quick sanity checks (on the CLEAN data, before the mess).
+    print("\n--- Checks on the clean data ---")
     summary = ad_spend.groupby("channel")[["impressions", "clicks", "spend"]].sum()
     print("\nAd spend totals by channel:")
     print(summary.to_string())
