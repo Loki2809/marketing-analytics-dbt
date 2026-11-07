@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from faker import Faker
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -28,6 +29,10 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 # One random number generator for the whole script, started from SEED.
 rng = np.random.default_rng(SEED)
+
+# Faker makes realistic fake emails. Seeding it makes the emails repeatable too.
+fake = Faker("en_US")
+Faker.seed(SEED)
 
 # How each channel behaves. These numbers drive the CAC / ROAS story later.
 #   daily_impressions: average ads shown (emails sent, for email) per campaign per day
@@ -59,6 +64,15 @@ CAMPAIGN_PLAN = [
     ("email_winback",              "email",  False),
     ("email_seasonal_promo",       "email",  False),
 ]
+
+N_CUSTOMERS = 5_000
+
+# Where customers live (share of all customers). Clean data uses 2-letter codes.
+COUNTRY_MIX = {"US": 0.60, "CA": 0.12, "GB": 0.10, "AU": 0.07, "DE": 0.06, "IN": 0.05}
+
+# Which channel brought each customer to the store for the first time.
+# "direct" = typed the URL or found us without an ad (no UTM tags).
+ACQUISITION_MIX = {"google": 0.35, "meta": 0.30, "email": 0.10, "direct": 0.25}
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +143,48 @@ def make_ad_spend(campaigns: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# 3. customers
+# ---------------------------------------------------------------------------
+
+def make_customers() -> pd.DataFrame:
+    """One row per customer: id, email, signup date, country, last update time.
+
+    Columns starting with "_" are helpers for later tables. They are NOT
+    written to the CSV (real raw data wouldn't have them).
+    """
+    n = N_CUSTOMERS
+    all_days = pd.date_range(START_DATE, END_DATE, freq="D")
+
+    # The store is growing: later days get more signups (weight rises 1.0 -> 1.6).
+    weights = np.linspace(1.0, 1.6, len(all_days))
+    signup_days = pd.DatetimeIndex(rng.choice(all_days, size=n, p=weights / weights.sum()))
+
+    # Add a random time of day, then sort so customer IDs follow signup order.
+    signup_ts = signup_days + pd.to_timedelta(rng.integers(0, 86_400, n), unit="s")
+    signup_ts = signup_ts.sort_values()
+
+    # About 30% of customers changed their profile later (e.g. moved country).
+    # Their updated_at is 1-120 days after signup (but never in the future).
+    changed = rng.random(n) < 0.30
+    later = signup_ts + pd.to_timedelta(rng.integers(1, 121, n), unit="D")
+    in_future = later > pd.Timestamp(END_DATE) + pd.Timedelta(days=1)
+    updated_at = np.where(changed & ~in_future, later, signup_ts)
+
+    return pd.DataFrame({
+        "customer_id": [f"C{i:05d}" for i in range(1, n + 1)],   # C00001, ...
+        "email": [fake.unique.email() for _ in range(n)],
+        "signup_date": signup_ts.date,
+        "country": rng.choice(list(COUNTRY_MIX), size=n, p=list(COUNTRY_MIX.values())),
+        "updated_at": pd.to_datetime(updated_at),
+        # helpers (not written to CSV):
+        "_signup_ts": signup_ts,
+        "_acquisition_channel": rng.choice(
+            list(ACQUISITION_MIX), size=n, p=list(ACQUISITION_MIX.values())
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main: build the tables and write them to CSV
 # ---------------------------------------------------------------------------
 
@@ -137,22 +193,29 @@ def main() -> None:
 
     campaigns = make_campaigns()
     ad_spend = make_ad_spend(campaigns)
+    customers = make_customers()
 
     tables = {
         "campaigns": campaigns,
         "ad_spend": ad_spend,
+        "customers": customers,
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, df in tables.items():
+        # Leave out helper columns (names starting with "_").
+        public = df.loc[:, ~df.columns.str.startswith("_")]
         path = OUTPUT_DIR / f"{name}.csv"
-        df.to_csv(path, index=False)
-        print(f"  {name:<12} {len(df):>8,} rows -> data/raw/{name}.csv")
+        public.to_csv(path, index=False)
+        print(f"  {name:<12} {len(public):>8,} rows -> data/raw/{name}.csv")
 
-    # Quick sanity check: totals per channel.
+    # Quick sanity checks.
     summary = ad_spend.groupby("channel")[["impressions", "clicks", "spend"]].sum()
     print("\nAd spend totals by channel:")
     print(summary.to_string())
+
+    print("\nCustomers by first channel:")
+    print(customers["_acquisition_channel"].value_counts().to_string())
 
 
 if __name__ == "__main__":
