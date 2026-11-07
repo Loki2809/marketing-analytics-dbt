@@ -99,6 +99,27 @@ DEVICE_MIX = {
     "direct": [0.55, 0.38, 0.07],
 }
 
+# --- events (the funnel inside each visit) ---
+# Every visit has 1+ page views (1 + about 1.8 extra on average).
+EXTRA_PAGE_VIEWS = 1.8
+SECONDS_BETWEEN_EVENTS = 60    # average gap between two events in a visit
+
+# Funnel for LOGGED-IN visits, per channel. Each number is the chance of
+# reaching that step, given the visitor reached the step before:
+#   (page_view -> add_to_cart, add_to_cart -> begin_checkout, begin_checkout -> purchase)
+# Email and direct visitors already know the store, so they buy more.
+# Meta visitors browse a lot but buy less.
+FUNNEL_LOGGED_IN = {
+    "email":  (0.65, 0.78, 0.88),
+    "direct": (0.60, 0.75, 0.88),
+    "google": (0.60, 0.72, 0.85),
+    "meta":   (0.45, 0.62, 0.75),
+}
+# ANONYMOUS visits: may add to cart and start checkout, but cannot buy
+# (the store requires an account to place an order).
+FUNNEL_ANONYMOUS_CART = {"email": 0.30, "direct": 0.20, "google": 0.25, "meta": 0.12}
+FUNNEL_ANONYMOUS_CHECKOUT = 0.40
+
 
 # ---------------------------------------------------------------------------
 # 1. campaigns
@@ -324,6 +345,65 @@ def make_web_sessions(ad_spend: pd.DataFrame, customers: pd.DataFrame) -> pd.Dat
 
 
 # ---------------------------------------------------------------------------
+# 5. events
+# ---------------------------------------------------------------------------
+
+def make_events(web_sessions: pd.DataFrame) -> pd.DataFrame:
+    """One row per action inside a visit, in funnel order:
+    page_view (1 or more) -> add_to_cart -> begin_checkout -> purchase.
+    Each visit stops at some step (that's the funnel drop-off).
+    """
+    s = web_sessions
+    n = len(s)
+    channel = s["_channel"]
+    logged_in = s["customer_id"].notna().to_numpy()
+
+    # Chance of each step, per visit (logged-in and anonymous visits differ).
+    p_cart = np.where(
+        logged_in,
+        channel.map(lambda ch: FUNNEL_LOGGED_IN[ch][0]),
+        channel.map(FUNNEL_ANONYMOUS_CART),
+    )
+    p_checkout = np.where(
+        logged_in,
+        channel.map(lambda ch: FUNNEL_LOGGED_IN[ch][1]),
+        FUNNEL_ANONYMOUS_CHECKOUT,
+    )
+    p_purchase = np.where(logged_in, channel.map(lambda ch: FUNNEL_LOGGED_IN[ch][2]), 0.0)
+
+    # Roll the dice step by step. You can only reach a step if you reached the one before.
+    n_page_views = 1 + rng.poisson(EXTRA_PAGE_VIEWS, n)
+    cart = rng.random(n) < p_cart
+    checkout = cart & (rng.random(n) < p_checkout)
+    purchase = checkout & (rng.random(n) < p_purchase)
+
+    # One row per event: repeat each visit once per event it has.
+    n_events = n_page_views + cart + checkout + purchase
+    ev = s.loc[s.index.repeat(n_events), ["session_id", "session_start"]].reset_index(drop=True)
+    step = ev.groupby("session_id").cumcount().to_numpy()   # 0, 1, 2, ... inside each visit
+    pv = np.repeat(n_page_views, n_events)                   # page views in that visit
+
+    # Steps 0..pv-1 are page views; then cart, checkout, purchase (if reached).
+    ev["event_name"] = np.select(
+        [step < pv, step == pv, step == pv + 1],
+        ["page_view", "add_to_cart", "begin_checkout"],
+        default="purchase",
+    )
+
+    # Timestamps: first event at the visit start, then random gaps
+    # (at least 1 second, so two events in a visit never share a timestamp).
+    gaps = 1 + rng.exponential(SECONDS_BETWEEN_EVENTS, len(ev))
+    gaps[step == 0] = 0
+    seconds_in = pd.Series(gaps).groupby(ev["session_id"]).cumsum().round()
+    ev["event_timestamp"] = ev["session_start"] + pd.to_timedelta(seconds_in, unit="s")
+
+    ev = ev.sort_values(["event_timestamp", "session_id"], ignore_index=True)
+    ev["event_id"] = [f"E{i:07d}" for i in range(1, len(ev) + 1)]   # E0000001, ...
+
+    return ev[["event_id", "session_id", "event_name", "event_timestamp"]]
+
+
+# ---------------------------------------------------------------------------
 # Main: build the tables and write them to CSV
 # ---------------------------------------------------------------------------
 
@@ -334,12 +414,14 @@ def main() -> None:
     ad_spend = make_ad_spend(campaigns)
     customers = make_customers()
     web_sessions = make_web_sessions(ad_spend, customers)
+    events = make_events(web_sessions)
 
     tables = {
         "campaigns": campaigns,
         "ad_spend": ad_spend,
         "customers": customers,
         "web_sessions": web_sessions,
+        "events": events,
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -364,6 +446,16 @@ def main() -> None:
         "sessions": web_sessions["_channel"].value_counts(),
         "logged_in": web_sessions.loc[logged_in, "_channel"].value_counts(),
     }).to_string())
+
+    # Funnel: how many visits reached each step, per channel.
+    reached = (
+        events.drop_duplicates(["session_id", "event_name"])
+        .merge(web_sessions[["session_id", "_channel"]], on="session_id")
+        .pivot_table(index="_channel", columns="event_name", values="session_id", aggfunc="count")
+    )
+    funnel = reached[["page_view", "add_to_cart", "begin_checkout", "purchase"]]
+    print("\nFunnel - visits reaching each step:")
+    print(funnel.to_string())
 
 
 if __name__ == "__main__":
