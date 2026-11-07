@@ -41,7 +41,7 @@ Faker.seed(SEED)
 CHANNELS = {
     "google": {"daily_impressions": 350, "ctr": 0.040, "cpc": 1.80},
     "meta":   {"daily_impressions": 900, "ctr": 0.012, "cpc": 0.90},
-    "email":  {"daily_impressions": 300, "ctr": 0.050, "cpc": 0.05},
+    "email":  {"daily_impressions": 300, "ctr": 0.050, "cpc": 0.25},
 }
 
 # The 15 campaigns: (campaign_name, channel, always_on)
@@ -119,6 +119,15 @@ FUNNEL_LOGGED_IN = {
 # (the store requires an account to place an order).
 FUNNEL_ANONYMOUS_CART = {"email": 0.30, "direct": 0.20, "google": 0.25, "meta": 0.12}
 FUNNEL_ANONYMOUS_CHECKOUT = 0.40
+
+# --- orders ---
+# Average order value (USD) by the channel of the visit where the purchase happened.
+# Email buyers often use discount codes, so their baskets are a bit smaller.
+AVG_ORDER_VALUE = {"google": 85.0, "direct": 80.0, "email": 70.0, "meta": 55.0}
+ORDER_VALUE_SPREAD = 0.5       # how much order values vary around the average
+
+# Final status of each order (clean values are lowercase).
+ORDER_STATUS_MIX = {"completed": 0.90, "returned": 0.05, "cancelled": 0.05}
 
 
 # ---------------------------------------------------------------------------
@@ -270,14 +279,14 @@ def make_web_sessions(ad_spend: pd.DataFrame, customers: pd.DataFrame) -> pd.Dat
     pool["session_start"] = _random_time_on(pool["date"])
     pool["customer_id"] = None
 
-    # C1. First visit: on the signup day, a few minutes before signing up.
+    # C1. First visit: starts at the moment the customer signs up, so anything
+    #     they buy in that visit happens after their account exists.
     signup_day = pd.to_datetime(customers["signup_date"])
-    minutes_before = pd.to_timedelta(rng.integers(1, 31, len(customers)), unit="min")
     first = pd.DataFrame({
         "customer_id": customers["customer_id"],
         "date": signup_day,
         "channel": customers["_acquisition_channel"],
-        "session_start": (customers["_signup_ts"] - minutes_before).clip(lower=signup_day),
+        "session_start": customers["_signup_ts"],
     })
 
     # C2. Return visits: more for customers who signed up earlier (more time to come back).
@@ -404,6 +413,40 @@ def make_events(web_sessions: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# 6. orders
+# ---------------------------------------------------------------------------
+
+def make_orders(events: pd.DataFrame, web_sessions: pd.DataFrame) -> pd.DataFrame:
+    """One order for every purchase event.
+
+    The orders table has no session_id (like many real shop systems). To find
+    which visit led to an order, dbt will later match customer_id + time.
+    """
+    purchases = (
+        events.loc[events["event_name"] == "purchase", ["session_id", "event_timestamp"]]
+        .merge(web_sessions[["session_id", "customer_id", "_channel"]], on="session_id")
+        .sort_values("event_timestamp", ignore_index=True)
+    )
+    n = len(purchases)
+
+    # Revenue: random around the channel's average order value.
+    # A lognormal spread gives many mid-size orders and a few big ones, like real shops.
+    avg = purchases["_channel"].map(AVG_ORDER_VALUE).to_numpy()
+    mu = np.log(avg) - ORDER_VALUE_SPREAD**2 / 2      # keeps the average at `avg`
+    revenue = rng.lognormal(mu, ORDER_VALUE_SPREAD).round(2)
+
+    return pd.DataFrame({
+        "order_id": [f"O{i:06d}" for i in range(1, n + 1)],    # O000001, ...
+        "customer_id": purchases["customer_id"],
+        "order_date": purchases["event_timestamp"],             # date and time of purchase
+        "revenue": revenue,
+        "status": rng.choice(list(ORDER_STATUS_MIX), size=n, p=list(ORDER_STATUS_MIX.values())),
+        # helper (not written to CSV): channel of the purchase visit
+        "_channel": purchases["_channel"],
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main: build the tables and write them to CSV
 # ---------------------------------------------------------------------------
 
@@ -415,6 +458,7 @@ def main() -> None:
     customers = make_customers()
     web_sessions = make_web_sessions(ad_spend, customers)
     events = make_events(web_sessions)
+    orders = make_orders(events, web_sessions)
 
     tables = {
         "campaigns": campaigns,
@@ -422,6 +466,7 @@ def main() -> None:
         "customers": customers,
         "web_sessions": web_sessions,
         "events": events,
+        "orders": orders,
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -456,6 +501,17 @@ def main() -> None:
     funnel = reached[["page_view", "add_to_cart", "begin_checkout", "purchase"]]
     print("\nFunnel - visits reaching each step:")
     print(funnel.to_string())
+
+    # Revenue and a rough ROAS by the channel of the purchase visit (completed orders only).
+    completed = orders[orders["status"] == "completed"]
+    by_channel = pd.DataFrame({
+        "orders": completed["_channel"].value_counts(),
+        "revenue": completed.groupby("_channel")["revenue"].sum().round(0),
+        "spend": ad_spend.groupby("channel")["spend"].sum().round(0),
+    })
+    by_channel["roas"] = (by_channel["revenue"] / by_channel["spend"]).round(1)
+    print("\nCompleted orders, revenue and rough ROAS by channel:")
+    print(by_channel.to_string())
 
 
 if __name__ == "__main__":
