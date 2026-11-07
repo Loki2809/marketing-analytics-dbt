@@ -74,6 +74,31 @@ COUNTRY_MIX = {"US": 0.60, "CA": 0.12, "GB": 0.10, "AU": 0.07, "DE": 0.06, "IN":
 # "direct" = typed the URL or found us without an ad (no UTM tags).
 ACQUISITION_MIX = {"google": 0.35, "meta": 0.30, "email": 0.10, "direct": 0.25}
 
+# --- web sessions (website visits) ---
+CLICK_TO_SESSION = 0.90        # 90% of ad clicks turn into a recorded visit
+N_DIRECT_SESSIONS = 17_000     # visits with no ad at all (no UTM tags)
+RETURN_VISITS_PER_YEAR = 5     # average return visits per customer per year
+
+# Which channel brings customers BACK (email is strong for repeat visits).
+RETURN_CHANNEL_MIX = {"email": 0.35, "direct": 0.30, "google": 0.20, "meta": 0.15}
+
+# UTM tags each channel puts on its links: channel -> (utm_source, utm_medium)
+UTM_TAGS = {
+    "google": ("google", "cpc"),            # cpc = cost per click (search ads)
+    "meta":   ("facebook", "paid_social"),
+    "email":  ("email", "email"),
+    "direct": (None, None),                 # no tags
+}
+
+# Device split per channel: [desktop, mobile, tablet]. Meta is mostly phones.
+DEVICES = ["desktop", "mobile", "tablet"]
+DEVICE_MIX = {
+    "google": [0.55, 0.38, 0.07],
+    "meta":   [0.20, 0.75, 0.05],
+    "email":  [0.45, 0.48, 0.07],
+    "direct": [0.55, 0.38, 0.07],
+}
+
 
 # ---------------------------------------------------------------------------
 # 1. campaigns
@@ -118,7 +143,7 @@ def make_ad_spend(campaigns: pd.DataFrame) -> pd.DataFrame:
         n = len(days)
 
         # Weekends are a bit quieter.
-        day_factor = np.where(days.dayofweek >= 5, 0.8, 1.0)
+        day_factor = np.where(days.day_of_week >= 5, 0.8, 1.0)
 
         # Impressions: random around the channel's daily average.
         impressions = rng.poisson(params["daily_impressions"] * day_factor)
@@ -185,6 +210,120 @@ def make_customers() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# 4. web_sessions
+# ---------------------------------------------------------------------------
+
+def _random_time_on(days: pd.Series) -> pd.Series:
+    """Give each date a random time of day."""
+    seconds = rng.integers(0, 86_400, len(days))
+    return days + pd.to_timedelta(seconds, unit="s")
+
+
+def make_web_sessions(ad_spend: pd.DataFrame, customers: pd.DataFrame) -> pd.DataFrame:
+    """One row per website visit.
+
+    How it works:
+      A. Ad clicks become anonymous visits (with UTM tags).
+      B. Extra "direct" visits are added (no UTM tags).
+      C. Each customer gets a first visit (on their signup day, via their
+         acquisition channel) plus some return visits later.
+      D. Those customer visits are matched to anonymous visits from the same
+         day and channel, i.e. the visitor "logged in". This keeps visits
+         consistent with ad clicks.
+    """
+    # A. Ad clicks -> anonymous visits. Repeat each ad_spend row once per visit.
+    visits_per_row = rng.binomial(ad_spend["clicks"], CLICK_TO_SESSION)
+    paid = (
+        ad_spend.loc[ad_spend.index.repeat(visits_per_row), ["date", "channel", "campaign"]]
+        .reset_index(drop=True)
+    )
+
+    # B. Direct visits, more of them later in the year (the store is growing).
+    all_days = pd.date_range(START_DATE, END_DATE, freq="D")
+    weights = np.linspace(1.0, 1.6, len(all_days))
+    direct_days = rng.choice(all_days, size=N_DIRECT_SESSIONS, p=weights / weights.sum())
+    direct = pd.DataFrame({"date": direct_days, "channel": "direct", "campaign": None})
+
+    pool = pd.concat([paid, direct], ignore_index=True)
+    pool["date"] = pd.to_datetime(pool["date"])
+    pool["session_start"] = _random_time_on(pool["date"])
+    pool["customer_id"] = None
+
+    # C1. First visit: on the signup day, a few minutes before signing up.
+    signup_day = pd.to_datetime(customers["signup_date"])
+    minutes_before = pd.to_timedelta(rng.integers(1, 31, len(customers)), unit="min")
+    first = pd.DataFrame({
+        "customer_id": customers["customer_id"],
+        "date": signup_day,
+        "channel": customers["_acquisition_channel"],
+        "session_start": (customers["_signup_ts"] - minutes_before).clip(lower=signup_day),
+    })
+
+    # C2. Return visits: more for customers who signed up earlier (more time to come back).
+    days_left = (pd.Timestamp(END_DATE) - signup_day).dt.days
+    n_returns = rng.poisson(days_left / 365 * RETURN_VISITS_PER_YEAR)
+    ret = customers.loc[customers.index.repeat(n_returns), ["customer_id"]].reset_index(drop=True)
+    ret_signup = signup_day.repeat(n_returns).reset_index(drop=True)
+    ret_days_left = days_left.repeat(n_returns).to_numpy()
+    ret["date"] = ret_signup + pd.to_timedelta(rng.integers(1, ret_days_left + 1), unit="D")
+    ret["channel"] = rng.choice(
+        list(RETURN_CHANNEL_MIX), size=len(ret), p=list(RETURN_CHANNEL_MIX.values())
+    )
+    ret["session_start"] = _random_time_on(ret["date"])
+
+    requests = pd.concat([first, ret], ignore_index=True)
+
+    # D. Match each customer visit to an unused anonymous visit (same day + channel).
+    #    Shuffle the pool, number the visits inside each (day, channel) group as
+    #    slots 0, 1, 2, ... and do the same for the requests. Then join on slot.
+    pool = pool.iloc[rng.permutation(len(pool))].reset_index(drop=True)
+    pool["_slot"] = pool.groupby(["date", "channel"]).cumcount()
+    requests["_slot"] = requests.groupby(["date", "channel"]).cumcount()
+    matched = requests.merge(
+        pool[["date", "channel", "_slot"]].reset_index(names="_pool_row"),
+        on=["date", "channel", "_slot"],
+        how="left",
+    )
+
+    found = matched["_pool_row"].notna()
+    rows = matched.loc[found, "_pool_row"].astype(int)
+    pool.loc[rows, "customer_id"] = matched.loc[found, "customer_id"].to_numpy()
+    pool.loc[rows, "session_start"] = matched.loc[found, "session_start"].to_numpy()
+
+    # No free anonymous visit that day (e.g. campaign not running yet)?
+    # Then the customer simply came in directly.
+    extra = matched.loc[~found, ["customer_id", "date", "session_start"]].copy()
+    extra["channel"] = "direct"
+    extra["campaign"] = None
+
+    sessions = pd.concat([pool.drop(columns="_slot"), extra], ignore_index=True)
+
+    # UTM tags and device, based on the channel.
+    sessions["utm_source"] = sessions["channel"].map(lambda ch: UTM_TAGS[ch][0])
+    sessions["utm_medium"] = sessions["channel"].map(lambda ch: UTM_TAGS[ch][1])
+    sessions["device"] = None
+    for channel, probs in DEVICE_MIX.items():
+        is_ch = sessions["channel"] == channel
+        sessions.loc[is_ch, "device"] = rng.choice(DEVICES, size=is_ch.sum(), p=probs)
+
+    # Sort by time and number the visits: S000001, S000002, ...
+    sessions = sessions.sort_values("session_start", ignore_index=True)
+    sessions["session_id"] = [f"S{i:06d}" for i in range(1, len(sessions) + 1)]
+
+    return pd.DataFrame({
+        "session_id": sessions["session_id"],
+        "customer_id": sessions["customer_id"],
+        "session_start": sessions["session_start"],
+        "utm_source": sessions["utm_source"],
+        "utm_medium": sessions["utm_medium"],
+        "utm_campaign": sessions["campaign"],
+        "device": sessions["device"],
+        # helper (not written to CSV): the true channel, used for funnel behavior
+        "_channel": sessions["channel"],
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main: build the tables and write them to CSV
 # ---------------------------------------------------------------------------
 
@@ -194,11 +333,13 @@ def main() -> None:
     campaigns = make_campaigns()
     ad_spend = make_ad_spend(campaigns)
     customers = make_customers()
+    web_sessions = make_web_sessions(ad_spend, customers)
 
     tables = {
         "campaigns": campaigns,
         "ad_spend": ad_spend,
         "customers": customers,
+        "web_sessions": web_sessions,
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -216,6 +357,13 @@ def main() -> None:
 
     print("\nCustomers by first channel:")
     print(customers["_acquisition_channel"].value_counts().to_string())
+
+    logged_in = web_sessions["customer_id"].notna()
+    print("\nWeb sessions by channel (total / logged in):")
+    print(pd.DataFrame({
+        "sessions": web_sessions["_channel"].value_counts(),
+        "logged_in": web_sessions.loc[logged_in, "_channel"].value_counts(),
+    }).to_string())
 
 
 if __name__ == "__main__":
