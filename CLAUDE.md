@@ -62,7 +62,7 @@ so the staging layer has real cleaning work.
 
 ## Milestones
 - [x] M0 Setup: Snowflake trial, warehouse/database/schemas, Python env, dbt installed, `dbt debug` passes, GitHub repo
-- [ ] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
+- [x] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
 - [ ] M2 Staging models + sources + basic tests
 - [ ] M3 Intermediate + marts (including attribution)
 - [ ] M4 Snapshot, incremental model, macro, custom test
@@ -78,9 +78,24 @@ Repo: github.com/Loki2809/marketing-analytics-dbt (branch `main`).
 Git identity: commit and push as Lokeshwaran / GitHub user Loki2809 using repo-local `git config` and a remote URL
 with `Loki2809@github.com`. Some machines have a different global Git identity; never change `--global` settings.
 
-M1 in progress. Done: pandas 3.1.0 + Faker 40.43.0 installed and pinned in `requirements.txt`.
-Next: write `data_generator/generate_data.py` (not started), then load into Snowflake RAW.
-Agreed M1 plan:
+Snowflake account (new trial, Nov 2026). Account identifier and user live only in env vars (repo is public).
+SNOWFLAKE_USER must be the user's LOGIN_NAME; in SQL the user NAME is lowercase, so always quote it
+(e.g. `SET u = '"' || CURRENT_USER() || '"'; ... IDENTIFIER($u)`).
+Objects: role TRANSFORMER (granted to the user), warehouse TRANSFORM_WH (XSMALL, auto-suspend 60),
+database MARKETING_DB (owned by TRANSFORMER) with schemas RAW and DBT_DEV. Key pair registered as RSA_PUBLIC_KEY.
+Windows setup on this machine: env vars set with `setx`; venv activation in PowerShell needs
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first (or use cmd + `.venv\Scripts\activate.bat`).
+
+M1 done (branch `m1/data-generator`).
+- `python data_generator/generate_data.py` builds clean tables, then adds deliberate mess (separate MESS_SEED)
+  and writes 6 CSVs to `data/raw/`. Window = last 365 days up to today, so counts shift slightly each day.
+- `python data_generator/load_to_snowflake.py` loads them into MARKETING_DB.RAW: all columns VARCHAR plus
+  `_LOADED_AT` (for freshness); PUT + COPY INTO via stage CSV_STAGE and file format CSV_FORMAT; tables are
+  replaced on every run.
+- Orders have no session_id: attribution must match customer_id + time. Only logged-in visits can purchase.
+Next: M2 staging models + sources + basic tests.
+
+M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.
 - Output: CSVs in `data/raw/`. `data/` is git-ignored; the data is rebuilt with one command.
 - Approx. rows: campaigns ~15, ad_spend ~4,000 (campaign x day), customers ~5,000, web_sessions ~60,000,
