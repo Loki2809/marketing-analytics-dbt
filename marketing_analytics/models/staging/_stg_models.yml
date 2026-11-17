@@ -1,0 +1,220 @@
+version: 2
+
+# Descriptions and tests for the staging models.
+# Tests run with `dbt test` or `dbt build`. Each test is a query that looks for BAD rows:
+# 0 bad rows = PASS.
+
+models:
+  - name: stg_campaigns
+    description: One clean row per marketing campaign, with standard channel names and real dates.
+    columns:
+      - name: campaign_id
+        description: Primary key (e.g. CMP001).
+        data_tests:
+          - unique
+          - not_null
+      - name: campaign_name
+        description: Campaign name; matches utm_campaign in web sessions and campaign in ad spend.
+        data_tests:
+          - unique
+          - not_null
+      - name: channel
+        description: Standard channel name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email']
+      - name: start_date
+        data_tests:
+          - not_null
+      - name: end_date
+        description: NULL when the campaign is still running.
+      - name: is_always_on
+        description: TRUE when the campaign has no end date yet.
+
+  - name: stg_ad_spend
+    description: One clean row per campaign per day, with standard channel names and real number types.
+    columns:
+      - name: ad_spend_id
+        description: Primary key, built from campaign_name + spend_date.
+        data_tests:
+          - unique
+          - not_null
+      - name: spend_date
+        data_tests:
+          - not_null
+      - name: channel
+        description: Standard channel name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email']
+      - name: campaign_name
+        description: The campaign this spend belongs to.
+        data_tests:
+          - not_null
+          # Every campaign in ad_spend must exist in stg_campaigns (like a foreign key).
+          - relationships:
+              arguments:
+                to: ref('stg_campaigns')
+                field: campaign_name
+      - name: impressions
+        data_tests:
+          - not_null
+      - name: clicks
+        description: NULL when the ad platform did not report clicks for that day.
+      - name: spend
+        description: Cost in USD.
+        data_tests:
+          - not_null
+
+  - name: stg_customers
+    description: >
+      One row per customer: the latest version of their profile, with clean email and country.
+      Includes internal test accounts, flagged with is_test_account.
+    columns:
+      - name: customer_id
+        description: Primary key (e.g. C00001).
+        data_tests:
+          - unique
+          - not_null
+      - name: email
+        description: Lowercase, no surrounding spaces.
+        data_tests:
+          - unique
+          - not_null
+      - name: signup_date
+        data_tests:
+          - not_null
+      - name: country
+        description: 2-letter country code. NULL when the customer didn't give one.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['US', 'CA', 'GB', 'AU', 'DE', 'IN']
+      - name: updated_at
+        description: When this version of the profile was saved.
+        data_tests:
+          - not_null
+      - name: is_test_account
+        description: TRUE for internal QA accounts (@test.com). Exclude these from reporting.
+        data_tests:
+          - not_null
+
+  - name: stg_web_sessions
+    description: One clean row per website visit, with standard UTM values and the marketing channel.
+    columns:
+      - name: session_id
+        description: Primary key (e.g. S000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: The logged-in customer. NULL for anonymous visitors.
+        data_tests:
+          # NULLs are skipped: only filled-in customer_ids must exist in stg_customers.
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: session_start
+        data_tests:
+          - not_null
+      - name: channel
+        description: >
+          Marketing channel behind the visit: google, meta, email, or direct (no UTM tags).
+          Some ad visits lost their tags, so they show up as direct.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: utm_source
+        description: Lowercase; 'fb' merged into 'facebook'. NULL for direct visits.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['google', 'facebook', 'email']
+      - name: utm_campaign
+        description: Campaign name from the ad link. NULL for direct visits.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_campaigns')
+                field: campaign_name
+      - name: device
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['desktop', 'mobile', 'tablet']
+      - name: is_logged_in
+        description: TRUE when the visitor was a known (logged-in) customer.
+
+  - name: stg_events
+    description: One clean row per action inside a visit (duplicates removed).
+    columns:
+      - name: event_id
+        description: Primary key (e.g. E0000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: session_id
+        description: The visit this event belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_web_sessions')
+                field: session_id
+      - name: event_name
+        description: Funnel step.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['page_view', 'add_to_cart', 'begin_checkout', 'purchase']
+      - name: event_timestamp
+        data_tests:
+          - not_null
+
+  - name: stg_orders
+    description: >
+      One clean row per order (duplicates removed, lowercase status).
+      Test orders are flagged, not removed: exclude rows where is_test_order is TRUE
+      or the customer is a test account.
+    columns:
+      - name: order_id
+        description: Primary key (e.g. O000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: The customer who placed the order (every order needs an account).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: ordered_at
+        description: Date and time of the purchase.
+        data_tests:
+          - not_null
+      - name: order_date
+        description: Date of the purchase (for daily and monthly reporting).
+      - name: revenue
+        description: Order value in USD.
+        data_tests:
+          - not_null
+      - name: status
+        description: completed, returned, cancelled, or test.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['completed', 'returned', 'cancelled', 'test']
+      - name: is_test_order
+        description: TRUE when status is 'test'. Exclude these from reporting.

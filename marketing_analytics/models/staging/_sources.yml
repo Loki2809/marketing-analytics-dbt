@@ -1,0 +1,45 @@
+version: 2
+
+# Sources = tables that dbt did NOT create. Ours are loaded into MARKETING_DB.RAW
+# by data_generator/load_to_snowflake.py. Models read them with {{ source('raw', '<table>') }}.
+sources:
+  - name: raw
+    description: >
+      Synthetic marketing data for a fictional online store, loaded from CSV.
+      Every column is text (VARCHAR), exactly as it arrived, mess included.
+      Cleaning and type casting happen in the staging models.
+    database: MARKETING_DB
+    schema: RAW
+
+    config:
+      # Freshness: how old is the newest row? dbt checks the _LOADED_AT column,
+      # which the loader fills with the load time.
+      loaded_at_field: _LOADED_AT
+      freshness:
+        warn_after: {count: 3, period: day}     # older than 3 days -> warning
+        error_after: {count: 7, period: day}    # older than 7 days -> error
+
+    tables:
+      - name: campaigns
+        description: One row per marketing campaign. Channel labels use the marketing team's names (e.g. 'Google Ads').
+
+      - name: ad_spend
+        description: One row per campaign per day. Channel names are inconsistent; some clicks are NULL.
+
+      - name: customers
+        description: >
+          Customer profiles. Contains older versions of some customers, exact duplicates,
+          messy emails and countries, and internal @test.com accounts.
+
+      - name: web_sessions
+        description: >
+          One row per website visit. customer_id is NULL for anonymous visitors.
+          UTM tags are NULL for direct visits (and for some ad visits that lost them).
+
+      - name: events
+        description: One row per action in a visit (page_view, add_to_cart, begin_checkout, purchase). Contains exact duplicates.
+
+      - name: orders
+        description: >
+          One row per order (no session_id). Status has mixed case; contains exact
+          duplicates and test orders (status TEST or @test.com customers).
