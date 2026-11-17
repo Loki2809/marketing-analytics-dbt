@@ -69,3 +69,86 @@ models:
         description: Cost in USD.
         data_tests:
           - not_null
+
+  - name: stg_customers
+    description: >
+      One row per customer: the latest version of their profile, with clean email and country.
+      Includes internal test accounts, flagged with is_test_account.
+    columns:
+      - name: customer_id
+        description: Primary key (e.g. C00001).
+        data_tests:
+          - unique
+          - not_null
+      - name: email
+        description: Lowercase, no surrounding spaces.
+        data_tests:
+          - unique
+          - not_null
+      - name: signup_date
+        data_tests:
+          - not_null
+      - name: country
+        description: 2-letter country code. NULL when the customer didn't give one.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['US', 'CA', 'GB', 'AU', 'DE', 'IN']
+      - name: updated_at
+        description: When this version of the profile was saved.
+        data_tests:
+          - not_null
+      - name: is_test_account
+        description: TRUE for internal QA accounts (@test.com). Exclude these from reporting.
+        data_tests:
+          - not_null
+
+  - name: stg_web_sessions
+    description: One clean row per website visit, with standard UTM values and the marketing channel.
+    columns:
+      - name: session_id
+        description: Primary key (e.g. S000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: The logged-in customer. NULL for anonymous visitors.
+        data_tests:
+          # NULLs are skipped: only filled-in customer_ids must exist in stg_customers.
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: session_start
+        data_tests:
+          - not_null
+      - name: channel
+        description: >
+          Marketing channel behind the visit: google, meta, email, or direct (no UTM tags).
+          Some ad visits lost their tags, so they show up as direct.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: utm_source
+        description: Lowercase; 'fb' merged into 'facebook'. NULL for direct visits.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['google', 'facebook', 'email']
+      - name: utm_campaign
+        description: Campaign name from the ad link. NULL for direct visits.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_campaigns')
+                field: campaign_name
+      - name: device
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['desktop', 'mobile', 'tablet']
+      - name: is_logged_in
+        description: TRUE when the visitor was a known (logged-in) customer.
