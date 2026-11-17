@@ -1,0 +1,71 @@
+version: 2
+
+# Descriptions and tests for the staging models.
+# Tests run with `dbt test` or `dbt build`. Each test is a query that looks for BAD rows:
+# 0 bad rows = PASS.
+
+models:
+  - name: stg_campaigns
+    description: One clean row per marketing campaign, with standard channel names and real dates.
+    columns:
+      - name: campaign_id
+        description: Primary key (e.g. CMP001).
+        data_tests:
+          - unique
+          - not_null
+      - name: campaign_name
+        description: Campaign name; matches utm_campaign in web sessions and campaign in ad spend.
+        data_tests:
+          - unique
+          - not_null
+      - name: channel
+        description: Standard channel name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email']
+      - name: start_date
+        data_tests:
+          - not_null
+      - name: end_date
+        description: NULL when the campaign is still running.
+      - name: is_always_on
+        description: TRUE when the campaign has no end date yet.
+
+  - name: stg_ad_spend
+    description: One clean row per campaign per day, with standard channel names and real number types.
+    columns:
+      - name: ad_spend_id
+        description: Primary key, built from campaign_name + spend_date.
+        data_tests:
+          - unique
+          - not_null
+      - name: spend_date
+        data_tests:
+          - not_null
+      - name: channel
+        description: Standard channel name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email']
+      - name: campaign_name
+        description: The campaign this spend belongs to.
+        data_tests:
+          - not_null
+          # Every campaign in ad_spend must exist in stg_campaigns (like a foreign key).
+          - relationships:
+              arguments:
+                to: ref('stg_campaigns')
+                field: campaign_name
+      - name: impressions
+        data_tests:
+          - not_null
+      - name: clicks
+        description: NULL when the ad platform did not report clicks for that day.
+      - name: spend
+        description: Cost in USD.
+        data_tests:
+          - not_null
