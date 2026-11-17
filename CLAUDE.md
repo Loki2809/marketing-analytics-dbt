@@ -63,7 +63,7 @@ so the staging layer has real cleaning work.
 ## Milestones
 - [x] M0 Setup: Snowflake trial, warehouse/database/schemas, Python env, dbt installed, `dbt debug` passes, GitHub repo
 - [x] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
-- [ ] M2 Staging models + sources + basic tests
+- [x] M2 Staging models + sources + basic tests
 - [ ] M3 Intermediate + marts (including attribution)
 - [ ] M4 Snapshot, incremental model, macro, custom test
 - [ ] M5 KPI mart (CAC, ROAS, conversion)
@@ -93,7 +93,18 @@ M1 done (branch `m1/data-generator`).
   `_LOADED_AT` (for freshness); PUT + COPY INTO via stage CSV_STAGE and file format CSV_FORMAT; tables are
   replaced on every run.
 - Orders have no session_id: attribution must match customer_id + time. Only logged-in visits can purchase.
-Next: M2 staging models + sources + basic tests.
+
+M2 done (branch `m2/staging`). `dbt build` = 6 views + 49 tests, all pass.
+- `models/staging/_sources.yml`: source `raw` (MARKETING_DB.RAW), freshness on `_LOADED_AT` (warn 3 days, error 7).
+- `models/staging/_stg_models.yml`: descriptions + tests. Generic test args go under `arguments:` (dbt 1.10+ style).
+- Staging models are views (set in dbt_project.yml). Standard channel names everywhere: google / meta / email,
+  plus `direct` in stg_web_sessions (no UTM; includes ~1,300 ad visits that lost their tags).
+- Dedup pattern: `qualify row_number() over (partition by <id> order by ...) = 1` (customers keep latest updated_at).
+- Test data is flagged, not deleted: stg_customers.is_test_account (@test.com), stg_orders.is_test_order
+  (status 'test'). Marts must exclude both (orders of test accounts need a join to stg_customers).
+- stg_orders splits raw order_date into ordered_at (timestamp, for attribution) and order_date (date).
+- Channel mapping is repeated in 3 models on purpose; refactor into a macro in M4.
+Next: M3 intermediate + marts (including attribution).
 
 M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.

@@ -152,3 +152,69 @@ models:
                 values: ['desktop', 'mobile', 'tablet']
       - name: is_logged_in
         description: TRUE when the visitor was a known (logged-in) customer.
+
+  - name: stg_events
+    description: One clean row per action inside a visit (duplicates removed).
+    columns:
+      - name: event_id
+        description: Primary key (e.g. E0000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: session_id
+        description: The visit this event belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_web_sessions')
+                field: session_id
+      - name: event_name
+        description: Funnel step.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['page_view', 'add_to_cart', 'begin_checkout', 'purchase']
+      - name: event_timestamp
+        data_tests:
+          - not_null
+
+  - name: stg_orders
+    description: >
+      One clean row per order (duplicates removed, lowercase status).
+      Test orders are flagged, not removed: exclude rows where is_test_order is TRUE
+      or the customer is a test account.
+    columns:
+      - name: order_id
+        description: Primary key (e.g. O000001).
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: The customer who placed the order (every order needs an account).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: ordered_at
+        description: Date and time of the purchase.
+        data_tests:
+          - not_null
+      - name: order_date
+        description: Date of the purchase (for daily and monthly reporting).
+      - name: revenue
+        description: Order value in USD.
+        data_tests:
+          - not_null
+      - name: status
+        description: completed, returned, cancelled, or test.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['completed', 'returned', 'cancelled', 'test']
+      - name: is_test_order
+        description: TRUE when status is 'test'. Exclude these from reporting.
