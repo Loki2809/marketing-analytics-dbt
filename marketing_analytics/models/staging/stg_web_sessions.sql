@@ -41,13 +41,13 @@ final as (
         customer_id,
         session_start,
 
+        -- No UTM tags -> 'direct'. Otherwise map the source with the shared macro
+        -- (macros/clean_channel.sql): google -> google, facebook -> meta, email -> email.
         -- Note: "when null" would never match in SQL (NULL is never equal to anything),
-        -- so missing tags are handled with "is null" in a searched CASE.
+        -- so missing tags are handled with "is null".
         case
-            when utm_source is null       then 'direct'
-            when utm_source = 'google'    then 'google'
-            when utm_source = 'facebook'  then 'meta'
-            when utm_source = 'email'     then 'email'
+            when utm_source is null then 'direct'
+            else {{ clean_channel('utm_source') }}
         end                                                 as channel,
 
         utm_source,
