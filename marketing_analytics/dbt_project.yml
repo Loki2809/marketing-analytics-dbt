@@ -38,3 +38,7 @@ models:
     # intermediate: joins and business logic that the marts build on. Not for reports directly.
     intermediate:
       +materialized: view
+    # marts: final star-schema tables for reporting (Power BI). Stored as tables so
+    # dashboards read them fast, without re-running all the logic underneath.
+    marts:
+      +materialized: table
