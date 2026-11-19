@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: int_sessions_funnel
+    description: >
+      One row per website visit with its funnel progress: page views, whether it reached
+      add_to_cart / begin_checkout / purchase, and the deepest step reached (funnel_stage).
+    columns:
+      - name: session_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: channel
+        data_tests:
+          - not_null
+      - name: page_views
+        description: Number of page_view events in the visit (every visit has at least 1).
+      - name: funnel_stage
+        description: Deepest funnel step reached.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['page_view', 'add_to_cart', 'begin_checkout', 'purchase']
+      - name: funnel_step_number
+        description: funnel_stage as a number, 1 (page_view) to 4 (purchase).
+      - name: session_duration_seconds
+        description: Seconds between the first and last event of the visit (0 for one-event visits).
+
+  - name: int_customer_touchpoints
+    description: >
+      Every visit by a logged-in customer, numbered in time order (touchpoint_number 1 = first visit).
+      Used by fct_attribution to give credit for orders to channels.
+    columns:
+      - name: session_id
+        description: Primary key (one row per visit).
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: channel
+        data_tests:
+          - not_null
+      - name: touchpoint_number
+        description: 1 for the customer's first visit, 2 for the second, and so on.
+        data_tests:
+          - not_null
+      - name: total_touchpoints
+        description: Total number of visits by this customer.
+      - name: is_first_touch
+        description: TRUE for the customer's first visit.

@@ -1,0 +1,213 @@
+version: 2
+
+# Final reporting tables (star schema). Test data is excluded here.
+
+models:
+  - name: dim_date
+    description: One row per calendar day, from the earliest data up to today. Use it like a Power BI date table.
+    columns:
+      - name: date_day
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: month_start
+        description: First day of the month (use it to group by month).
+      - name: week_start
+        description: Monday of the week.
+      - name: day_of_week
+        description: 1 = Monday ... 7 = Sunday.
+      - name: is_weekend
+        description: TRUE on Saturday and Sunday.
+
+  - name: dim_customers
+    description: >
+      One row per real customer (test accounts removed), with their first-touch channel
+      and a summary of their completed orders.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: first_touch_channel
+        description: Channel of the customer's first visit (the channel that "found" them).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: completed_orders
+        description: Number of completed orders (0 if none).
+        data_tests:
+          - not_null
+      - name: lifetime_revenue
+        description: Total revenue from completed orders, in USD.
+        data_tests:
+          - not_null
+      - name: has_purchased
+        description: TRUE if the customer has at least one completed order.
+
+  - name: dim_campaigns
+    description: One row per marketing campaign, with totals of its ad spend.
+    columns:
+      - name: campaign_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: campaign_name
+        data_tests:
+          - unique
+          - not_null
+      - name: channel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email']
+      - name: total_spend
+        description: Total spend over the whole period, in USD.
+
+  - name: fct_sessions
+    description: One row per website visit, with channel, campaign and funnel progress.
+    columns:
+      - name: session_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: session_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: customer_id
+        description: NULL for anonymous visitors.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: campaign_id
+        description: NULL for visits without a campaign (direct).
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: channel
+        data_tests:
+          - not_null
+      - name: funnel_stage
+        data_tests:
+          - not_null
+
+  - name: fct_orders
+    description: >
+      One row per real order (test orders and orders from test accounts removed).
+      Use completed_revenue (or filter is_completed) for revenue reporting.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['completed', 'returned', 'cancelled']
+      - name: completed_revenue
+        description: Revenue if the order was completed, otherwise 0.
+        data_tests:
+          - not_null
+      - name: completed_order_number
+        description: 1 for a customer's first completed order (they become a paying customer), 2 for the second, ...
+
+  - name: fct_ad_spend_daily
+    description: One row per campaign per day, with spend, clicks, impressions, CTR and CPC.
+    columns:
+      - name: ad_spend_id
+        description: Primary key (campaign_name + date).
+        data_tests:
+          - unique
+          - not_null
+      - name: spend_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: campaign_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: ctr
+        description: Click-through rate = clicks / impressions. NULL when clicks weren't reported.
+      - name: cpc
+        description: Cost per click in USD = spend / clicks. NULL when clicks weren't reported.
+
+  - name: fct_attribution
+    description: >
+      One row per real order with first-touch and last-touch channel credit.
+      First touch = channel of the customer's first visit. Last touch = channel of their
+      last visit at or before the order. Sum completed_revenue by either channel column
+      to compare the two views.
+    columns:
+      - name: order_id
+        description: Primary key (one row per order).
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: first_touch_channel
+        description: Channel of the customer's first-ever visit.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: last_touch_channel
+        description: Channel of the last visit at or before the order.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: last_touch_session_id
+        description: The visit that gets last-touch credit (usually the visit where the purchase happened).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_sessions')
+                field: session_id
+      - name: touchpoints_before_order
+        description: Number of visits by the customer up to the order.
+      - name: days_from_first_touch
+        description: Days between the first visit and the order.
+      - name: is_same_channel
+        description: TRUE when first and last touch are the same channel.
