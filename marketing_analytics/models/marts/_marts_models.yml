@@ -166,3 +166,48 @@ models:
         description: Click-through rate = clicks / impressions. NULL when clicks weren't reported.
       - name: cpc
         description: Cost per click in USD = spend / clicks. NULL when clicks weren't reported.
+
+  - name: fct_attribution
+    description: >
+      One row per real order with first-touch and last-touch channel credit.
+      First touch = channel of the customer's first visit. Last touch = channel of their
+      last visit at or before the order. Sum completed_revenue by either channel column
+      to compare the two views.
+    columns:
+      - name: order_id
+        description: Primary key (one row per order).
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: first_touch_channel
+        description: Channel of the customer's first-ever visit.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: last_touch_channel
+        description: Channel of the last visit at or before the order.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: last_touch_session_id
+        description: The visit that gets last-touch credit (usually the visit where the purchase happened).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_sessions')
+                field: session_id
+      - name: touchpoints_before_order
+        description: Number of visits by the customer up to the order.
+      - name: days_from_first_touch
+        description: Days between the first visit and the order.
+      - name: is_same_channel
+        description: TRUE when first and last touch are the same channel.

@@ -64,7 +64,7 @@ so the staging layer has real cleaning work.
 - [x] M0 Setup: Snowflake trial, warehouse/database/schemas, Python env, dbt installed, `dbt debug` passes, GitHub repo
 - [x] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
 - [x] M2 Staging models + sources + basic tests
-- [ ] M3 Intermediate + marts (including attribution)
+- [x] M3 Intermediate + marts (including attribution)
 - [ ] M4 Snapshot, incremental model, macro, custom test
 - [ ] M5 KPI mart (CAC, ROAS, conversion)
 - [ ] M6 CI with GitHub Actions
@@ -104,7 +104,21 @@ M2 done (branch `m2/staging`). `dbt build` = 6 views + 49 tests, all pass.
   (status 'test'). Marts must exclude both (orders of test accounts need a join to stg_customers).
 - stg_orders splits raw order_date into ordered_at (timestamp, for attribution) and order_date (date).
 - Channel mapping is repeated in 3 models on purpose; refactor into a macro in M4.
-Next: M3 intermediate + marts (including attribution).
+
+M3 done (branch `m3/marts`). Intermediate = views, marts = tables (dbt_project.yml).
+- int_sessions_funnel: 1 row per visit; events summarised (count_if) then left-joined; funnel_stage 1-4.
+- int_customer_touchpoints: logged-in visits numbered per customer (touchpoint_number, is_first_touch).
+- dim_date (generator() date spine from earliest fact date to current_date), dim_customers (test accounts
+  removed; first-touch channel; completed orders/revenue), dim_campaigns (+ spend totals).
+- fct_sessions (+ campaign_id), fct_orders (both kinds of test orders removed; completed_revenue;
+  completed_order_number = 1 marks a new paying customer, for CAC), fct_ad_spend_daily (+ CTR, CPC).
+- fct_attribution: 1 row per order; time-based join (same customer AND session_start <= ordered_at);
+  first touch = touchpoint 1, last touch = latest visit before the order.
+- Pattern: always summarise (group by) before joining to avoid fan-out; unique tests on every PK prove it.
+- Reconciliation checks that tie out: purchases in fct_sessions = rows in fct_orders; completed revenue in
+  fct_orders = lifetime_revenue in dim_customers; spend identical across stg/dim/fct.
+- Story: first touch credits google/meta (finding customers); last touch credits email (closing sales).
+Next: M4 snapshot (customers), incremental fct_sessions, channel macro, custom test.
 
 M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.
