@@ -35,3 +35,6 @@ models:
     # staging: light cleaning of each RAW table. Views keep them always up to date.
     staging:
       +materialized: view
+    # intermediate: joins and business logic that the marts build on. Not for reports directly.
+    intermediate:
+      +materialized: view
