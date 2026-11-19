@@ -67,3 +67,102 @@ models:
                 values: ['google', 'meta', 'email']
       - name: total_spend
         description: Total spend over the whole period, in USD.
+
+  - name: fct_sessions
+    description: One row per website visit, with channel, campaign and funnel progress.
+    columns:
+      - name: session_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: session_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: customer_id
+        description: NULL for anonymous visitors.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: campaign_id
+        description: NULL for visits without a campaign (direct).
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: channel
+        data_tests:
+          - not_null
+      - name: funnel_stage
+        data_tests:
+          - not_null
+
+  - name: fct_orders
+    description: >
+      One row per real order (test orders and orders from test accounts removed).
+      Use completed_revenue (or filter is_completed) for revenue reporting.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['completed', 'returned', 'cancelled']
+      - name: completed_revenue
+        description: Revenue if the order was completed, otherwise 0.
+        data_tests:
+          - not_null
+      - name: completed_order_number
+        description: 1 for a customer's first completed order (they become a paying customer), 2 for the second, ...
+
+  - name: fct_ad_spend_daily
+    description: One row per campaign per day, with spend, clicks, impressions, CTR and CPC.
+    columns:
+      - name: ad_spend_id
+        description: Primary key (campaign_name + date).
+        data_tests:
+          - unique
+          - not_null
+      - name: spend_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: campaign_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: ctr
+        description: Click-through rate = clicks / impressions. NULL when clicks weren't reported.
+      - name: cpc
+        description: Cost per click in USD = spend / clicks. NULL when clicks weren't reported.
