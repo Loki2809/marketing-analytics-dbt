@@ -16,12 +16,8 @@ cleaned as (
         campaign_id,
         campaign_name,
 
-        -- Standard channel names, so campaigns can be joined to ad_spend and web_sessions later.
-        case lower(trim(channel))
-            when 'google ads' then 'google'
-            when 'meta ads'   then 'meta'
-            when 'email'      then 'email'
-        end                         as channel,
+        -- Standard channel names (macros/clean_channel.sql), shared with ad_spend and web_sessions.
+        {{ clean_channel('channel') }} as channel,
 
         cast(start_date as date)    as start_date,
         cast(end_date as date)      as end_date,        -- NULL = still running

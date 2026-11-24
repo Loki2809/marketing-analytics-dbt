@@ -1,0 +1,12 @@
+version: 2
+
+macros:
+  - name: clean_channel
+    description: >
+      Maps any spelling of a marketing channel (e.g. 'Google Ads', 'google_ads', 'META', 'fb')
+      to a standard name: google, meta or email. Unknown values become NULL so tests catch them.
+      Used by stg_campaigns, stg_ad_spend and stg_web_sessions.
+    arguments:
+      - name: column_name
+        type: string
+        description: The column (or SQL expression) holding the messy channel label.

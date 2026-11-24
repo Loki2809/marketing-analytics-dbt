@@ -65,7 +65,7 @@ so the staging layer has real cleaning work.
 - [x] M1 Raw data: Python generator → CSVs → loaded into Snowflake RAW
 - [x] M2 Staging models + sources + basic tests
 - [x] M3 Intermediate + marts (including attribution)
-- [ ] M4 Snapshot, incremental model, macro, custom test
+- [x] M4 Snapshot, incremental model, macro, custom test
 - [ ] M5 KPI mart (CAC, ROAS, conversion)
 - [ ] M6 CI with GitHub Actions
 - [ ] M7 README, architecture diagram, dbt docs, Power BI dashboard, resume bullets
@@ -118,7 +118,22 @@ M3 done (branch `m3/marts`). Intermediate = views, marts = tables (dbt_project.y
 - Reconciliation checks that tie out: purchases in fct_sessions = rows in fct_orders; completed revenue in
   fct_orders = lifetime_revenue in dim_customers; spend identical across stg/dim/fct.
 - Story: first touch credits google/meta (finding customers); last touch credits email (closing sales).
-Next: M4 snapshot (customers), incremental fct_sessions, channel macro, custom test.
+
+M4 done (branch `m4/advanced`).
+- Macro `macros/clean_channel.sql` (+ `_macros.yml`): one CASE mapping any channel spelling to google/meta/email
+  (unknown -> NULL so tests catch it). Used by stg_campaigns, stg_ad_spend, stg_web_sessions (which keeps its own
+  "no UTM -> direct" rule). Refactor verified with MINUS both ways: identical results.
+- Custom singular test `tests/assert_attribution_touches_before_order.sql` (+ `_tests.yml`): first/last touch
+  must be at or before the order. Proven to catch a broken join (4,208 bad rows without the time condition).
+- Snapshot `snapshots/customers_snapshot.yml` (YAML-style, dbt 1.9+): ref('stg_customers'), timestamp strategy on
+  updated_at, unique_key customer_id, schema `snapshots` -> lands in MARKETING_DB.DBT_DEV_snapshots.
+  Demo: inserted a new RAW row for C00002 (GB -> CA); snapshot closed the GB row and opened a CA row.
+- Incremental `fct_sessions`: merge on session_id, lookback var `sessions_lookback_days` (default 3) for
+  late-arriving events, `dbt_processed_at` column. Full refresh = 60k rows; incremental run ~450 rows.
+- CAVEAT (synthetic data): regenerating all raw data shifts dates/IDs for everything. After a full regenerate +
+  load: run `dbt build --full-refresh` (rebuilds fct_sessions) and expect the snapshot to record a new version
+  for every customer (drop MARKETING_DB.DBT_DEV_SNAPSHOTS.CUSTOMERS_SNAPSHOT first for a clean history).
+Next: M5 mart_marketing_kpis (CAC, ROAS, conversion rate by channel and month).
 
 M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.

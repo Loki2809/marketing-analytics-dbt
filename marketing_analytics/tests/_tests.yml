@@ -1,0 +1,9 @@
+version: 2
+
+# Descriptions for the custom (singular) tests in this folder. They show up in dbt docs.
+data_tests:
+  - name: assert_attribution_touches_before_order
+    description: >
+      Guards the time-based join in fct_attribution: every order's first and last touch must
+      happen at or before the order, first touch can't be after last touch, and every order
+      must have at least one visit before it.

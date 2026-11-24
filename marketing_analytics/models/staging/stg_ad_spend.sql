@@ -18,11 +18,7 @@ cleaned as (
         campaign || '|' || date             as ad_spend_id,
         cast(date as date)                  as spend_date,
 
-        case
-            when lower(trim(channel)) in ('google', 'google ads', 'google_ads') then 'google'
-            when lower(trim(channel)) in ('meta', 'meta ads', 'meta_ads')       then 'meta'
-            when lower(trim(channel)) in ('email')                              then 'email'
-        end                                 as channel,
+        {{ clean_channel('channel') }}      as channel,     -- macros/clean_channel.sql
 
         campaign                            as campaign_name,
         cast(impressions as integer)        as impressions,
