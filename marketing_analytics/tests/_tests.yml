@@ -7,3 +7,8 @@ data_tests:
       Guards the time-based join in fct_attribution: every order's first and last touch must
       happen at or before the order, first touch can't be after last touch, and every order
       must have at least one visit before it.
+
+  - name: assert_kpi_mart_reconciles
+    description: >
+      mart_marketing_kpis must add up to the fact tables: total spend, sessions, new customers,
+      and revenue (under both attribution models) must match exactly.

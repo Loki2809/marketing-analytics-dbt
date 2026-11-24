@@ -215,3 +215,52 @@ models:
         description: Days between the first visit and the order.
       - name: is_same_channel
         description: TRUE when first and last touch are the same channel.
+
+  - name: mart_marketing_kpis
+    description: >
+      One row per month per channel (google, meta, email, direct) with the marketing KPIs:
+      spend, sessions, funnel, new customers, revenue, CAC, ROAS and conversion rate.
+      New customers and CAC use FIRST-touch attribution; revenue and ROAS are given for both
+      first and last touch. Revenue counts completed orders only. 'direct' has no spend, so
+      its CAC and ROAS are NULL. Sum the base columns (spend, new_customers, ...) and divide
+      again for totals; don't average the ratio columns.
+    columns:
+      - name: kpi_id
+        description: Primary key, channel|YYYY-MM.
+        data_tests:
+          - unique
+          - not_null
+      - name: month_start
+        description: First day of the month.
+        data_tests:
+          - not_null
+      - name: channel
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['google', 'meta', 'email', 'direct']
+      - name: spend
+        description: Ad spend in USD (0 for direct).
+        data_tests:
+          - not_null
+      - name: new_customers
+        description: Customers whose first completed order was this month, credited to their first-touch channel.
+        data_tests:
+          - not_null
+      - name: revenue_first_touch
+        description: Completed revenue this month, credited to each order's first-touch channel.
+      - name: revenue_last_touch
+        description: Completed revenue this month, credited to each order's last-touch channel.
+      - name: cac
+        description: Customer acquisition cost = spend / new_customers. NULL when there is no spend or no new customers.
+      - name: roas_first_touch
+        description: Return on ad spend = revenue_first_touch / spend. NULL when there is no spend.
+      - name: roas_last_touch
+        description: Return on ad spend = revenue_last_touch / spend. NULL when there is no spend.
+      - name: conversion_rate
+        description: Share of the channel's visits that ended in a purchase.
+      - name: add_to_cart_rate
+        description: Share of the channel's visits that added something to the cart.
+      - name: ctr
+        description: Click-through rate = clicks / impressions (0 for direct).

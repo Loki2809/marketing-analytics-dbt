@@ -66,7 +66,7 @@ so the staging layer has real cleaning work.
 - [x] M2 Staging models + sources + basic tests
 - [x] M3 Intermediate + marts (including attribution)
 - [x] M4 Snapshot, incremental model, macro, custom test
-- [ ] M5 KPI mart (CAC, ROAS, conversion)
+- [x] M5 KPI mart (CAC, ROAS, conversion)
 - [ ] M6 CI with GitHub Actions
 - [ ] M7 README, architecture diagram, dbt docs, Power BI dashboard, resume bullets
 
@@ -133,7 +133,20 @@ M4 done (branch `m4/advanced`).
 - CAVEAT (synthetic data): regenerating all raw data shifts dates/IDs for everything. After a full regenerate +
   load: run `dbt build --full-refresh` (rebuilds fct_sessions) and expect the snapshot to record a new version
   for every customer (drop MARKETING_DB.DBT_DEV_SNAPSHOTS.CUSTOMERS_SNAPSHOT first for a clean history).
-Next: M5 mart_marketing_kpis (CAC, ROAS, conversion rate by channel and month).
+
+M5 done (branch `m5/kpis`).
+- `mart_marketing_kpis` (table): 1 row per month x channel (google/meta/email/direct), built on a spine
+  (dim_date months x inline `values` channels) with 5 pre-aggregated CTEs left-joined on.
+- Definitions: new customers + CAC = FIRST touch (first completed order, by dim_customers.first_touch_channel);
+  revenue + ROAS = BOTH first and last touch (fct_attribution); sessions/conversion = visit's own channel;
+  revenue = completed only. CAC = nullif(spend,0)/nullif(new_customers,0) -> NULL for direct (no spend).
+- For totals in Power BI: sum base columns then divide; never average the ratio columns.
+- Custom test `tests/assert_kpi_mart_reconciles.sql`: mart totals = fact totals (spend, sessions, new customers,
+  revenue under both models).
+- Full-year story: Meta cheapest CAC (~$12) and best first-touch ROAS; Google priciest CAC (~$28); Email best
+  last-touch ROAS (~25). Last-touch alone would undervalue Meta. Email CAC is pessimistic (its spend also
+  serves retention).
+Next: M6 CI with GitHub Actions (dbt build on every PR, Snowflake creds as GitHub Secrets).
 
 M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.
