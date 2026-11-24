@@ -69,7 +69,11 @@ models:
         description: Total spend over the whole period, in USD.
 
   - name: fct_sessions
-    description: One row per website visit, with channel, campaign and funnel progress.
+    description: >
+      One row per website visit, with channel, campaign and funnel progress.
+      Incremental: each run re-processes only the last few days of visits (lookback window,
+      var sessions_lookback_days, default 3) and merges them on session_id.
+      After regenerating all raw data, rebuild it with --full-refresh.
     columns:
       - name: session_id
         description: Primary key.
