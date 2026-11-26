@@ -27,8 +27,8 @@ jobs:
     env:
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-      # The key is written to this temporary file in a step below; dbt reads it from here.
-      SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/snowflake_ci_key.p8
+      # SNOWFLAKE_PRIVATE_KEY_PATH is set inside the "Write the Snowflake private key" step:
+      # the runner's temp folder is only known inside steps, not at job level.
 
     defaults:
       run:
@@ -53,8 +53,11 @@ jobs:
         env:
           SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
         run: |
-          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$SNOWFLAKE_PRIVATE_KEY_PATH"
-          chmod 600 "$SNOWFLAKE_PRIVATE_KEY_PATH"
+          key_path="$RUNNER_TEMP/snowflake_ci_key.p8"
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          # Pass the path to all later steps (that's what $GITHUB_ENV is for); dbt reads it from there.
+          echo "SNOWFLAKE_PRIVATE_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
       - name: Check the Snowflake connection
         run: dbt debug --target ci
