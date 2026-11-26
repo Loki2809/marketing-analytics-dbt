@@ -67,7 +67,7 @@ so the staging layer has real cleaning work.
 - [x] M3 Intermediate + marts (including attribution)
 - [x] M4 Snapshot, incremental model, macro, custom test
 - [x] M5 KPI mart (CAC, ROAS, conversion)
-- [ ] M6 CI with GitHub Actions
+- [x] M6 CI with GitHub Actions
 - [ ] M7 README, architecture diagram, dbt docs, Power BI dashboard, resume bullets
 
 ## Current status
@@ -146,7 +146,22 @@ M5 done (branch `m5/kpis`).
 - Full-year story: Meta cheapest CAC (~$12) and best first-touch ROAS; Google priciest CAC (~$28); Email best
   last-touch ROAS (~25). Last-touch alone would undervalue Meta. Email CAC is pessimistic (its spend also
   serves retention).
-Next: M6 CI with GitHub Actions (dbt build on every PR, Snowflake creds as GitHub Secrets).
+
+M6 done (branch `m6/ci`).
+- `.github/workflows/dbt_ci.yml` ("dbt CI"): on pull_request to main (+ workflow_dispatch). Ubuntu, Python 3.12,
+  pip install -r requirements.txt, writes the key secret to $RUNNER_TEMP and exports SNOWFLAKE_PRIVATE_KEY_PATH via
+  $GITHUB_ENV, then `dbt debug --target ci`, `dbt source freshness --target ci` (continue-on-error), and
+  `dbt build --target ci --full-refresh`; key file removed with `if: always()`.
+  Lesson: the `runner` context is NOT available in job-level `env` (GitHub rejects the whole file: run named
+  after the file path, 0 jobs, no PR check). Set such values inside a step.
+- `profiles.yml` has a `ci` target: same env vars, schema DBT_CI (snapshot lands in DBT_CI_snapshots).
+- Snowflake service user DBT_CI_USER (TYPE = SERVICE, default role TRANSFORMER, key-pair only).
+  Key pair from `python scripts/generate_snowflake_keypair.py ci` -> ~/.snowflake/ci_rsa_key.p8/.pub.
+- GitHub Secrets: SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER (DBT_CI_USER), SNOWFLAKE_PRIVATE_KEY (full .p8 contents).
+- Test the CI login locally: in a cmd window `set SNOWFLAKE_USER=DBT_CI_USER` and
+  `set SNOWFLAKE_PRIVATE_KEY_PATH=...\ci_rsa_key.p8`, then `dbt debug --target ci` (close that window after).
+- CI reads RAW already in Snowflake; it stops working when the Snowflake trial ends (~Dec 13, 2026).
+Next: M7 README, architecture diagram, dbt docs, Power BI dashboard, resume bullets.
 
 M1 plan (as built):
 - Window: last 12 months up to today. Fixed random seed so runs are reproducible.
