@@ -4,23 +4,30 @@ The keys are saved in your home folder (~/.snowflake), outside this repo,
 so the private key can never be committed to Git.
 
 Run from the project root with the venv active:
-    python scripts/generate_snowflake_keypair.py
+    python scripts/generate_snowflake_keypair.py          -> rsa_key.p8 / rsa_key.pub   (your own login)
+    python scripts/generate_snowflake_keypair.py ci       -> ci_rsa_key.p8 / ci_rsa_key.pub (the CI service user)
+
+The optional name lets each Snowflake user have its own key pair.
 """
 
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 KEY_DIR = Path.home() / ".snowflake"
-PRIVATE_KEY_PATH = KEY_DIR / "rsa_key.p8"
-PUBLIC_KEY_PATH = KEY_DIR / "rsa_key.pub"
 
 
 def main() -> None:
+    # Optional first argument: a name prefix, e.g. "ci" -> ci_rsa_key.p8
+    prefix = f"{sys.argv[1]}_" if len(sys.argv) > 1 else ""
+    private_key_path = KEY_DIR / f"{prefix}rsa_key.p8"
+    public_key_path = KEY_DIR / f"{prefix}rsa_key.pub"
+
     # Never overwrite an existing key: Snowflake would stop accepting the old one.
-    if PRIVATE_KEY_PATH.exists() or PUBLIC_KEY_PATH.exists():
-        print(f"Keys already exist in {KEY_DIR}. Nothing was changed.")
+    if private_key_path.exists() or public_key_path.exists():
+        print(f"Keys already exist: {private_key_path}. Nothing was changed.")
         return
 
     KEY_DIR.mkdir(exist_ok=True)
@@ -38,16 +45,16 @@ def main() -> None:
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
 
-    PRIVATE_KEY_PATH.write_bytes(private_pem)
-    PUBLIC_KEY_PATH.write_bytes(public_pem)
+    private_key_path.write_bytes(private_pem)
+    public_key_path.write_bytes(public_pem)
 
     # Snowflake wants the public key as one line, without the BEGIN/END lines.
     public_key_one_line = "".join(
         line for line in public_pem.decode().splitlines() if not line.startswith("-----")
     )
 
-    print(f"Private key (keep secret): {PRIVATE_KEY_PATH}")
-    print(f"Public key:                {PUBLIC_KEY_PATH}")
+    print(f"Private key (keep secret): {private_key_path}")
+    print(f"Public key:                {public_key_path}")
     print()
     print("Public key for Snowflake (safe to share):")
     print(public_key_one_line)
