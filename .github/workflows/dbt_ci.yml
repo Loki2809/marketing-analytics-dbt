@@ -1,0 +1,72 @@
+# CI (Continuous Integration): on every pull request to main, GitHub starts a fresh Linux
+# machine, installs dbt and runs `dbt build` against Snowflake. If any model or test fails,
+# the pull request shows a red X, so broken code doesn't get merged.
+#
+# Credentials come from GitHub Secrets (Settings -> Secrets and variables -> Actions):
+#   SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER (the DBT_CI_USER service user), SNOWFLAKE_PRIVATE_KEY.
+# dbt uses the `ci` target in profiles.yml, which builds into its own schema (DBT_CI).
+# Note: CI reads the RAW data already loaded in Snowflake; it doesn't generate data itself.
+
+name: dbt CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:          # also allows a manual run from the Actions tab
+
+# If you push again to the same pull request, cancel the older run that is still going.
+concurrency:
+  group: dbt-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dbt-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      # The key is written to this temporary file in a step below; dbt reads it from here.
+      SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/snowflake_ci_key.p8
+
+    defaults:
+      run:
+        working-directory: marketing_analytics   # run dbt commands from the dbt project folder
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dbt and the other pinned packages
+        working-directory: .
+        run: python -m pip install -r requirements.txt
+
+      - name: Write the Snowflake private key to a temporary file
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$SNOWFLAKE_PRIVATE_KEY_PATH"
+          chmod 600 "$SNOWFLAKE_PRIVATE_KEY_PATH"
+
+      - name: Check the Snowflake connection
+        run: dbt debug --target ci
+
+      - name: Check source freshness (information only, does not fail the run)
+        run: dbt source freshness --target ci
+        continue-on-error: true
+
+      - name: Build and test everything
+        # --full-refresh: rebuild the incremental model from scratch, so every CI run starts clean.
+        run: dbt build --target ci --full-refresh
+
+      - name: Remove the key file
+        if: always()
+        run: rm -f "$SNOWFLAKE_PRIVATE_KEY_PATH"

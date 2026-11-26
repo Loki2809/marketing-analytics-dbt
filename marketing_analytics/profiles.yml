@@ -15,3 +15,17 @@ marketing_analytics:
       database: MARKETING_DB
       schema: DBT_DEV
       threads: 4
+
+    # ci: used by GitHub Actions (dbt build --target ci). Same settings, but its own schema
+    # (DBT_CI), so automated runs never overwrite dev work. The CI service user
+    # (DBT_CI_USER) and its key come from GitHub Secrets through the same env vars.
+    ci:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role: TRANSFORMER
+      warehouse: TRANSFORM_WH
+      database: MARKETING_DB
+      schema: DBT_CI
+      threads: 4
